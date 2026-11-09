@@ -1,0 +1,9 @@
+.git
+dist
+.env
+internal/web/dist/assets
+internal/web/dist/index.html
+frontend/node_modules
+frontend/dist
+frontend/.pnpm-store
+frontend/tsconfig.tsbuildinfo

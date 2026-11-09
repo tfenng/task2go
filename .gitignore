@@ -1,0 +1,9 @@
+/dist/
+/.env
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.pnpm-store/
+/frontend/.vite/
+/frontend/tsconfig.tsbuildinfo
+/internal/web/dist/*
+!/internal/web/dist/.gitkeep

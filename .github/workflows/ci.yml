@@ -1,0 +1,37 @@
+name: task2go-ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: task_control_test
+          POSTGRES_USER: task_control
+          POSTGRES_PASSWORD: task_control
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U task_control -d task_control_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: go.sum
+      - run: mkdir -p internal/web/dist && printf '<!doctype html><title>ci</title>' > internal/web/dist/index.html
+      - run: gofmt -l . && go vet ./...
+      - run: go test ./...
+        env:
+          TASK_CONTROL_TEST_DATABASE_URL: postgresql+psycopg://task_control:task_control@localhost:5432/task_control_test
+
+# Frontend build stays in the parent repository until task2go is split out.
+# After splitting, copy `frontend/` into this repo and add a pnpm build job.

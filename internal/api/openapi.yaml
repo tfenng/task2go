@@ -1,0 +1,2368 @@
+openapi: 3.1.0
+info:
+  title: Task Control Center API
+  version: 1.0.0
+  description: |
+    任务中控系统 REST API。Web 使用 HttpOnly 会话 Cookie；API/自动化使用 Bearer Token。
+    Cookie 认证的 POST/PUT/PATCH/DELETE 需要 X-CSRF-Token。所有时间均为 ISO 8601 UTC。
+servers:
+  - url: /api/v1
+    description: Versioned API
+tags:
+  - name: auth
+    description: 登录、会话、密码与 API Token
+  - name: users
+    description: 用户与角色（管理员）
+  - name: definitions
+    description: 任务定义与不可变版本
+  - name: targets
+    description: 执行目标（管理员）
+  - name: credentials
+    description: 凭据引用（管理员，永不返回明文）
+  - name: schedules
+    description: 一次性、cron、固定间隔调度
+  - name: runs
+    description: 任务运行与执行尝试
+  - name: stats
+    description: 运行与尝试统计
+  - name: audit
+    description: 审计事件（管理员）
+  - name: health
+    description: 存活与就绪检查
+security:
+  - sessionCookie: []
+  - bearerAuth: []
+
+paths:
+  /auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: 本地账号登录
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: 登录成功，设置 tc_session 与 tc_csrf Cookie
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '423':
+          $ref: '#/components/responses/Locked'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: 退出当前会话
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204':
+          description: 已退出
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /auth/me:
+    get:
+      tags: [auth]
+      operationId: getMe
+      summary: 当前用户
+      responses:
+        '200':
+          description: 当前用户
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/password:
+    post:
+      tags: [auth]
+      operationId: changePassword
+      summary: 修改自己的密码
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password:
+                  type: string
+                  format: password
+                new_password:
+                  type: string
+                  format: password
+                  minLength: 12
+      responses:
+        '204':
+          description: 密码已修改，其他会话被吊销
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /auth/sessions:
+    get:
+      tags: [auth]
+      operationId: listSessions
+      summary: 当前用户的会话
+      responses:
+        '200':
+          description: 会话列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/sessions/{session_id}:
+    delete:
+      tags: [auth]
+      operationId: revokeSession
+      summary: 吊销一个会话
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204':
+          description: 已吊销
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /auth/tokens:
+    get:
+      tags: [auth]
+      operationId: listApiTokens
+      summary: 当前用户的 API Token
+      responses:
+        '200':
+          description: Token 列表（不含明文）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiTokenList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [auth]
+      operationId: createApiToken
+      summary: 创建个人 API Token
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApiTokenCreate'
+      responses:
+        '201':
+          description: 创建成功；明文 token 仅在此响应出现一次
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiTokenCreated'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /auth/tokens/{token_id}:
+    delete:
+      tags: [auth]
+      operationId: revokeApiToken
+      summary: 吊销 API Token
+      parameters:
+        - $ref: '#/components/parameters/TokenId'
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204':
+          description: 已吊销
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /users:
+    get:
+      tags: [users]
+      operationId: listUsers
+      summary: 用户列表（管理员）
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
+        - name: role
+          in: query
+          schema:
+            $ref: '#/components/schemas/Role'
+        - name: active
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: 用户列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [users]
+      operationId: createUser
+      summary: 创建用户（管理员）
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+      responses:
+        '201':
+          description: 用户已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /users/{user_id}:
+    get:
+      tags: [users]
+      operationId: getUser
+      summary: 用户详情（管理员）
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: 用户详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [users]
+      operationId: updateUser
+      summary: 更新显示名、角色或启用状态（管理员）
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/CsrfToken'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdate'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /users/{user_id}/reset-password:
+    post:
+      tags: [users]
+      operationId: resetUserPassword
+      summary: 管理员重置用户密码
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: 临时密码仅返回一次；用户下次登录必须修改
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PasswordResetResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /task-definitions:
+    get:
+      tags: [definitions]
+      operationId: listDefinitions
+      summary: 任务定义列表
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
+        - name: q
+          in: query
+          schema:
+            type: string
+            maxLength: 100
+        - name: archived
+          in: query
+          schema:
+            type: boolean
+        - name: executor_type
+          in: query
+          schema:
+            $ref: '#/components/schemas/ExecutorType'
+      responses:
+        '200':
+          description: 定义列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskDefinitionList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [definitions]
+      operationId: createDefinition
+      summary: 创建任务定义及第一个版本
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskDefinitionCreate'
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskDefinition'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /task-definitions/{definition_id}:
+    get:
+      tags: [definitions]
+      operationId: getDefinition
+      summary: 任务定义详情
+      parameters:
+        - $ref: '#/components/parameters/DefinitionId'
+      responses:
+        '200':
+          description: 定义详情，包含当前启用版本
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskDefinition'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [definitions]
+      operationId: updateDefinition
+      summary: 更新定义元数据；版本字段变化时创建新版本
+      parameters:
+        - $ref: '#/components/parameters/DefinitionId'
+        - $ref: '#/components/parameters/CsrfToken'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskDefinitionUpdate'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskDefinition'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /task-definitions/{definition_id}/enable:
+    post:
+      tags: [definitions]
+      operationId: enableDefinition
+      summary: 启用定义
+      parameters:
+        - $ref: '#/components/parameters/DefinitionId'
+        - $ref: '#/components/parameters/CsrfToken'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200':
+          description: 已启用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskDefinition'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+  /task-definitions/{definition_id}/disable:
+    post:
+      tags: [definitions]
+      operationId: disableDefinition
+      summary: 禁用定义并暂停关联调度
+      description: 暂停所有 active 调度，取消未到期的 scheduled 运行（DEFINITION_DISABLED）。
+      parameters:
+        - $ref: '#/components/parameters/DefinitionId'
+        - $ref: '#/components/parameters/CsrfToken'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200':
+          description: 已禁用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskDefinition'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+  /task-definitions/{definition_id}/archive:
+    post:
+      tags: [definitions]
+      operationId: archiveDefinition
+      summary: 归档定义；取消未开始运行，保留历史
+      parameters:
+        - $ref: '#/components/parameters/DefinitionId'
+        - $ref: '#/components/parameters/CsrfToken'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200':
+          description: 已归档
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskDefinition'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+  /task-definitions/{definition_id}/versions:
+    get:
+      tags: [definitions]
+      operationId: listDefinitionVersions
+      summary: 定义版本列表
+      parameters:
+        - $ref: '#/components/parameters/DefinitionId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: 版本列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskDefinitionVersionList'
+  /task-definitions/{definition_id}/versions/{version_no}:
+    get:
+      tags: [definitions]
+      operationId: getDefinitionVersion
+      summary: 定义版本详情
+      parameters:
+        - $ref: '#/components/parameters/DefinitionId'
+        - $ref: '#/components/parameters/VersionNo'
+      responses:
+        '200':
+          description: 版本详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskDefinitionVersion'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /execution-targets:
+    get:
+      tags: [targets]
+      operationId: listTargets
+      summary: 执行目标列表（管理员）
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: type
+          in: query
+          schema:
+            $ref: '#/components/schemas/TargetType'
+        - name: active
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: 目标列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionTargetList'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [targets]
+      operationId: createTarget
+      summary: 登记执行目标（管理员）
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExecutionTargetCreate'
+      responses:
+        '201':
+          description: 目标已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionTarget'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /execution-targets/{target_id}:
+    get:
+      tags: [targets]
+      operationId: getTarget
+      summary: 执行目标详情（管理员）
+      parameters:
+        - $ref: '#/components/parameters/TargetId'
+      responses:
+        '200':
+          description: 目标详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionTarget'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [targets]
+      operationId: updateTarget
+      summary: 更新或禁用执行目标（管理员）
+      parameters:
+        - $ref: '#/components/parameters/TargetId'
+        - $ref: '#/components/parameters/CsrfToken'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExecutionTargetUpdate'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionTarget'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    delete:
+      tags: [targets]
+      operationId: deleteTarget
+      summary: 删除执行目标（管理员；未被任务定义或活动运行引用时）
+      parameters:
+        - $ref: '#/components/parameters/TargetId'
+        - $ref: '#/components/parameters/CsrfToken'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '204':
+          description: 已删除
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+
+  /credentials:
+    get:
+      tags: [credentials]
+      operationId: listCredentials
+      summary: 凭据列表（管理员，仅元数据）
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: kind
+          in: query
+          schema:
+            $ref: '#/components/schemas/CredentialKind'
+      responses:
+        '200':
+          description: 凭据元数据列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CredentialList'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [credentials]
+      operationId: createCredential
+      summary: 创建凭据（管理员）
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CredentialCreate'
+      responses:
+        '201':
+          description: 已创建；响应不含 secret
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Credential'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /credentials/{credential_id}:
+    get:
+      tags: [credentials]
+      operationId: getCredential
+      summary: 凭据元数据（管理员）
+      parameters:
+        - $ref: '#/components/parameters/CredentialId'
+      responses:
+        '200':
+          description: 凭据元数据
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Credential'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [credentials]
+      operationId: updateCredential
+      summary: 更新凭据或禁用（管理员）
+      parameters:
+        - $ref: '#/components/parameters/CredentialId'
+        - $ref: '#/components/parameters/CsrfToken'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CredentialUpdate'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Credential'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    delete:
+      tags: [credentials]
+      operationId: deleteCredential
+      summary: 删除凭据（管理员；未被执行目标或活动运行引用时）
+      parameters:
+        - $ref: '#/components/parameters/CredentialId'
+        - $ref: '#/components/parameters/CsrfToken'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '204':
+          description: 已删除
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+
+  /schedules:
+    get:
+      tags: [schedules]
+      operationId: listSchedules
+      summary: 调度列表
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
+        - name: definition_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/ScheduleStatus'
+        - name: trigger_type
+          in: query
+          schema:
+            $ref: '#/components/schemas/TriggerType'
+      responses:
+        '200':
+          description: 调度列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduleList'
+    post:
+      tags: [schedules]
+      operationId: createSchedule
+      summary: 创建调度
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduleCreate'
+      responses:
+        '201':
+          description: 调度已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /schedules/{schedule_id}:
+    get:
+      tags: [schedules]
+      operationId: getSchedule
+      summary: 调度详情
+      parameters:
+        - $ref: '#/components/parameters/ScheduleId'
+      responses:
+        '200':
+          description: 调度详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [schedules]
+      operationId: updateSchedule
+      summary: 更新调度
+      parameters:
+        - $ref: '#/components/parameters/ScheduleId'
+        - $ref: '#/components/parameters/CsrfToken'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduleUpdate'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /schedules/{schedule_id}/pause:
+    post:
+      tags: [schedules]
+      operationId: pauseSchedule
+      summary: 暂停调度
+      parameters:
+        - $ref: '#/components/parameters/ScheduleId'
+        - $ref: '#/components/parameters/CsrfToken'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200':
+          description: 已暂停
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+  /schedules/{schedule_id}/resume:
+    post:
+      tags: [schedules]
+      operationId: resumeSchedule
+      summary: 恢复调度
+      parameters:
+        - $ref: '#/components/parameters/ScheduleId'
+        - $ref: '#/components/parameters/CsrfToken'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200':
+          description: 已恢复
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+  /schedules/{schedule_id}/cancel:
+    post:
+      tags: [schedules]
+      operationId: cancelSchedule
+      summary: 取消调度，保留历史运行
+      parameters:
+        - $ref: '#/components/parameters/ScheduleId'
+        - $ref: '#/components/parameters/CsrfToken'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200':
+          description: 已取消
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+
+  /runs:
+    get:
+      tags: [runs]
+      operationId: listRuns
+      summary: 运行列表
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
+        - name: definition_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: definition_version_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: schedule_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/RunStatus'
+        - name: trigger_type
+          in: query
+          schema:
+            $ref: '#/components/schemas/TriggerType'
+        - name: executor_type
+          in: query
+          schema:
+            $ref: '#/components/schemas/ExecutorType'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+      responses:
+        '200':
+          description: 运行列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunList'
+    post:
+      tags: [runs]
+      operationId: createRun
+      summary: 提交一次运行（立即或指定时间一次）
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunCreate'
+      responses:
+        '201':
+          description: 运行已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '200':
+          description: 幂等键命中，返回已有运行
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /runs/{run_id}:
+    get:
+      tags: [runs]
+      operationId: getRun
+      summary: 运行详情
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: 运行详情及尝试摘要
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /runs/{run_id}/cancel:
+    post:
+      tags: [runs]
+      operationId: cancelRun
+      summary: 取消运行
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunCancelRequest'
+      responses:
+        '200':
+          description: 取消请求已接受或运行已取消
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /runs/{run_id}/retry:
+    post:
+      tags: [runs]
+      operationId: retryRun
+      summary: 手工重试，复制原参数与定义版本
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+        - $ref: '#/components/parameters/CsrfToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunRetryRequest'
+      responses:
+        '201':
+          description: 新运行已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '200':
+          description: 幂等键命中，返回已有新运行
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /runs/{run_id}/attempts:
+    get:
+      tags: [runs]
+      operationId: listRunAttempts
+      summary: 运行的所有尝试
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: 尝试列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttemptList'
+  /runs/{run_id}/attempts/{attempt_no}:
+    get:
+      tags: [runs]
+      operationId: getRunAttempt
+      summary: 单次尝试详情
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+        - $ref: '#/components/parameters/AttemptNo'
+      responses:
+        '200':
+          description: 尝试详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attempt'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /stats/runs:
+    get:
+      tags: [stats]
+      operationId: getRunStats
+      summary: 运行统计
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/Timezone'
+        - name: definition_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: definition_version_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: trigger_type
+          in: query
+          schema:
+            $ref: '#/components/schemas/TriggerType'
+        - name: executor_type
+          in: query
+          schema:
+            $ref: '#/components/schemas/ExecutorType'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/RunStatus'
+        - name: group_by
+          in: query
+          schema:
+            type: string
+            enum: [none, day, definition, trigger, executor]
+            default: none
+      responses:
+        '200':
+          description: 运行统计
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunStats'
+  /stats/attempts:
+    get:
+      tags: [stats]
+      operationId: getAttemptStats
+      summary: 尝试统计
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/Timezone'
+        - name: definition_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: executor_type
+          in: query
+          schema:
+            $ref: '#/components/schemas/ExecutorType'
+        - name: group_by
+          in: query
+          schema:
+            type: string
+            enum: [none, day, definition, executor]
+            default: none
+      responses:
+        '200':
+          description: 尝试统计
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttemptStats'
+
+  /audit-events:
+    get:
+      tags: [audit]
+      operationId: listAuditEvents
+      summary: 审计事件（管理员）
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
+        - name: actor_user_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: resource_type
+          in: query
+          schema:
+            type: string
+        - name: resource_id
+          in: query
+          schema:
+            type: string
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+      responses:
+        '200':
+          description: 审计事件列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditEventList'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /health/live:
+    get:
+      tags: [health]
+      operationId: live
+      summary: 进程存活检查
+      security: []
+      responses:
+        '200':
+          description: 进程存活
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+  /health/ready:
+    get:
+      tags: [health]
+      operationId: ready
+      summary: 就绪检查（数据库、调度器/worker 心跳）
+      security: []
+      responses:
+        '200':
+          description: 就绪
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+        '503':
+          description: 未就绪
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: tc_session
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: page_size
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    Sort:
+      name: sort
+      in: query
+      schema:
+        type: string
+        example: '-created_at'
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: false
+      description: Cookie 会话的写操作必填；Bearer Token 不需要。
+      schema:
+        type: string
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: 当前资源 version；缺失返回 428，版本不匹配返回 409。
+      schema:
+        type: string
+        example: '"3"'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: 运行提交/手工重试的幂等键，建议 UUID。
+      schema:
+        type: string
+        maxLength: 128
+    From:
+      name: from
+      in: query
+      schema:
+        type: string
+        format: date-time
+    To:
+      name: to
+      in: query
+      schema:
+        type: string
+        format: date-time
+    Timezone:
+      name: timezone
+      in: query
+      description: 统计分桶时区；默认 UTC。
+      schema:
+        type: string
+        default: UTC
+    SessionId:
+      name: session_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TokenId:
+      name: token_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    UserId:
+      name: user_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DefinitionId:
+      name: definition_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    VersionNo:
+      name: version_no
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    TargetId:
+      name: target_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    CredentialId:
+      name: credential_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ScheduleId:
+      name: schedule_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    RunId:
+      name: run_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AttemptNo:
+      name: attempt_no
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+
+  responses:
+    Unauthorized:
+      description: 未认证或会话过期
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: 权限不足
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: 版本冲突、幂等冲突或状态不允许
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    PreconditionRequired:
+      description: 缺少 If-Match（乐观并发前置条件）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ValidationError:
+      description: 请求或参数校验失败
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RateLimited:
+      description: 请求过于频繁
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Locked:
+      description: 账号锁定
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    Role:
+      type: string
+      enum: [admin, operator, viewer]
+    ExecutorType:
+      type: string
+      enum: [local, ssh, http]
+    TargetType:
+      type: string
+      enum: [local, ssh, http]
+    TriggerType:
+      type: string
+      enum: [immediate, once, cron, interval]
+    RunStatus:
+      type: string
+      enum: [scheduled, queued, running, retry_wait, succeeded, failed, cancelled, skipped, missed]
+    AttemptStatus:
+      type: string
+      enum: [running, succeeded, failed, timed_out, cancelled]
+    ScheduleStatus:
+      type: string
+      enum: [active, paused, completed, cancelled]
+    OverlapPolicy:
+      type: string
+      enum: [skip, queue]
+    CredentialKind:
+      type: string
+      enum: [password, ssh_key, http_bearer, http_basic]
+    AuditOutcome:
+      type: string
+      enum: [success, failure, denied]
+    JsonObject:
+      type: object
+      additionalProperties: true
+
+    ErrorDetail:
+      type: object
+      required: [code, message]
+      properties:
+        field:
+          type: [string, 'null']
+        code:
+          type: string
+        message:
+          type: string
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, correlation_id]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: array
+              items:
+                $ref: '#/components/schemas/ErrorDetail'
+            correlation_id:
+              type: string
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 64
+        password:
+          type: string
+          format: password
+    LoginResponse:
+      type: object
+      required: [user, csrf_token]
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        csrf_token:
+          type: string
+          description: 同时写入可读 tc_csrf Cookie；写请求通过 X-CSRF-Token 回传。
+    User:
+      type: object
+      required: [id, username, display_name, role, is_active, must_change_password, created_at, updated_at, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        display_name:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+        is_active:
+          type: boolean
+        must_change_password:
+          type: boolean
+        last_login_at:
+          type: [string, 'null']
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+    UserCreate:
+      type: object
+      required: [username, display_name, role, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 64
+        display_name:
+          type: string
+          maxLength: 128
+        role:
+          $ref: '#/components/schemas/Role'
+        password:
+          type: string
+          format: password
+          minLength: 12
+    UserUpdate:
+      type: object
+      properties:
+        display_name:
+          type: string
+          maxLength: 128
+        role:
+          $ref: '#/components/schemas/Role'
+        is_active:
+          type: boolean
+    UserList:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/User'
+    PasswordResetResponse:
+      type: object
+      required: [temporary_password]
+      properties:
+        temporary_password:
+          type: string
+          description: 仅返回一次；用户下次登录必须修改。
+    SessionInfo:
+      type: object
+      required: [id, created_at, last_seen_at, expires_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        ip_address:
+          type: [string, 'null']
+        user_agent:
+          type: [string, 'null']
+        created_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        current:
+          type: boolean
+    SessionList:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/SessionInfo'
+    ApiToken:
+      type: object
+      required: [id, name, token_prefix, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        token_prefix:
+          type: string
+        expires_at:
+          type: [string, 'null']
+          format: date-time
+        last_used_at:
+          type: [string, 'null']
+          format: date-time
+        revoked_at:
+          type: [string, 'null']
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    ApiTokenCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 64
+        expires_at:
+          type: [string, 'null']
+          format: date-time
+    ApiTokenCreated:
+      allOf:
+        - $ref: '#/components/schemas/ApiToken'
+        - type: object
+          required: [token]
+          properties:
+            token:
+              type: string
+              description: 仅此响应返回一次，之后只存哈希。
+    ApiTokenList:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/ApiToken'
+
+    RetryPolicy:
+      type: object
+      required: [max_attempts, initial_backoff_seconds, multiplier, max_backoff_seconds]
+      properties:
+        max_attempts:
+          type: integer
+          minimum: 1
+          maximum: 10
+        initial_backoff_seconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
+        multiplier:
+          type: number
+          minimum: 1
+          maximum: 10
+        max_backoff_seconds:
+          type: integer
+          minimum: 1
+          maximum: 86400
+        retry_on_exit_codes:
+          type: array
+          items:
+            type: integer
+        retryable_error_classes:
+          type: array
+          items:
+            type: string
+    TaskDefinitionVersionInput:
+      type: object
+      required: [executor_type, parameter_schema, executor_config, timeout_seconds, retry_policy, max_concurrency]
+      properties:
+        executor_type:
+          $ref: '#/components/schemas/ExecutorType'
+        parameter_schema:
+          $ref: '#/components/schemas/JsonObject'
+          description: JSON Schema 2020-12 子集；敏感字段必须 x-secret/writeOnly。
+        executor_config:
+          $ref: '#/components/schemas/JsonObject'
+        timeout_seconds:
+          type: integer
+          minimum: 1
+          maximum: 86400
+        retry_policy:
+          $ref: '#/components/schemas/RetryPolicy'
+        max_concurrency:
+          type: integer
+          minimum: 1
+          maximum: 100
+    TaskDefinitionCreate:
+      type: object
+      required: [key, name, version]
+      properties:
+        key:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{1,99}$'
+        name:
+          type: string
+          maxLength: 160
+        description:
+          type: [string, 'null']
+          maxLength: 2000
+        version:
+          $ref: '#/components/schemas/TaskDefinitionVersionInput'
+    TaskDefinitionUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 160
+        description:
+          type: [string, 'null']
+          maxLength: 2000
+        version:
+          $ref: '#/components/schemas/TaskDefinitionVersionInput'
+    TaskDefinitionVersion:
+      type: object
+      required: [id, definition_id, version_no, executor_type, parameter_schema, executor_config, timeout_seconds, retry_policy, max_concurrency, checksum, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        definition_id:
+          type: string
+          format: uuid
+        version_no:
+          type: integer
+        executor_type:
+          $ref: '#/components/schemas/ExecutorType'
+        parameter_schema:
+          $ref: '#/components/schemas/JsonObject'
+        executor_config:
+          $ref: '#/components/schemas/JsonObject'
+        timeout_seconds:
+          type: integer
+        retry_policy:
+          $ref: '#/components/schemas/RetryPolicy'
+        max_concurrency:
+          type: integer
+        checksum:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    TaskDefinition:
+      type: object
+      required: [id, key, name, is_archived, active_version, created_at, updated_at, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        key:
+          type: string
+        name:
+          type: string
+        description:
+          type: [string, 'null']
+        is_archived:
+          type: boolean
+        active_version:
+          $ref: '#/components/schemas/TaskDefinitionVersion'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+    TaskDefinitionList:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/TaskDefinition'
+    TaskDefinitionVersionList:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/TaskDefinitionVersion'
+
+    ExecutionTarget:
+      type: object
+      required: [id, name, type, config, is_active, created_at, updated_at, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        type:
+          $ref: '#/components/schemas/TargetType'
+        config:
+          $ref: '#/components/schemas/JsonObject'
+        credential_id:
+          type: [string, 'null']
+          format: uuid
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+    ExecutionTargetCreate:
+      type: object
+      required: [name, type, config]
+      properties:
+        name:
+          type: string
+          maxLength: 120
+        type:
+          $ref: '#/components/schemas/TargetType'
+        config:
+          $ref: '#/components/schemas/JsonObject'
+        credential_id:
+          type: [string, 'null']
+          format: uuid
+    ExecutionTargetUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 120
+        config:
+          $ref: '#/components/schemas/JsonObject'
+        credential_id:
+          type: [string, 'null']
+          format: uuid
+        is_active:
+          type: boolean
+    ExecutionTargetList:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/ExecutionTarget'
+
+    Credential:
+      type: object
+      required: [id, name, kind, metadata, is_active, created_at, updated_at, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        kind:
+          $ref: '#/components/schemas/CredentialKind'
+        metadata:
+          $ref: '#/components/schemas/JsonObject'
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+    CredentialCreate:
+      type: object
+      required: [name, kind, secret]
+      properties:
+        name:
+          type: string
+          maxLength: 120
+        kind:
+          $ref: '#/components/schemas/CredentialKind'
+        secret:
+          type: string
+          format: password
+          description: 只写；服务端加密存储，永不返回。
+        metadata:
+          $ref: '#/components/schemas/JsonObject'
+    CredentialUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 120
+        secret:
+          type: string
+          format: password
+          description: 只写；提供时轮换密文。
+        metadata:
+          $ref: '#/components/schemas/JsonObject'
+        is_active:
+          type: boolean
+    CredentialList:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Credential'
+
+    Schedule:
+      type: object
+      required: [id, definition_id, definition_version_id, name, trigger_type, timezone, parameters, overlap_policy, misfire_grace_seconds, status, created_at, updated_at, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        definition_id:
+          type: string
+          format: uuid
+        definition_version_id:
+          type: string
+          format: uuid
+        target_id:
+          type: [string, 'null']
+          format: uuid
+        name:
+          type: string
+        trigger_type:
+          $ref: '#/components/schemas/TriggerType'
+        fire_at:
+          type: [string, 'null']
+          format: date-time
+        cron_expr:
+          type: [string, 'null']
+        interval_seconds:
+          type: [integer, 'null']
+        timezone:
+          type: string
+        parameters:
+          $ref: '#/components/schemas/JsonObject'
+          description: 敏感字段脱敏展示，不返回密文。
+        overlap_policy:
+          $ref: '#/components/schemas/OverlapPolicy'
+        misfire_grace_seconds:
+          type: integer
+        status:
+          $ref: '#/components/schemas/ScheduleStatus'
+        next_fire_at:
+          type: [string, 'null']
+          format: date-time
+        last_fire_at:
+          type: [string, 'null']
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+    ScheduleCreate:
+      type: object
+      required: [definition_id, definition_version_id, name, trigger_type, timezone, parameters]
+      properties:
+        definition_id:
+          type: string
+          format: uuid
+        definition_version_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 120
+        trigger_type:
+          type: string
+          enum: [once, cron, interval]
+        fire_at:
+          type: [string, 'null']
+          format: date-time
+        cron_expr:
+          type: [string, 'null']
+        interval_seconds:
+          type: [integer, 'null']
+          minimum: 10
+        timezone:
+          type: string
+          default: UTC
+        parameters:
+          $ref: '#/components/schemas/JsonObject'
+        overlap_policy:
+          $ref: '#/components/schemas/OverlapPolicy'
+        misfire_grace_seconds:
+          type: integer
+          minimum: 0
+    ScheduleUpdate:
+      type: object
+      description: 更新调度；trigger_type 不可变，变更触发类型需取消后新建。
+      properties:
+        name:
+          type: string
+          maxLength: 120
+        definition_version_id:
+          type: string
+          format: uuid
+        fire_at:
+          type: [string, 'null']
+          format: date-time
+        cron_expr:
+          type: [string, 'null']
+        interval_seconds:
+          type: [integer, 'null']
+          minimum: 10
+        timezone:
+          type: string
+        parameters:
+          $ref: '#/components/schemas/JsonObject'
+        overlap_policy:
+          $ref: '#/components/schemas/OverlapPolicy'
+        misfire_grace_seconds:
+          type: integer
+          minimum: 0
+    ScheduleList:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Schedule'
+
+    RunTrigger:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [immediate, once]
+        fire_at:
+          type: [string, 'null']
+          format: date-time
+          description: type=once 时必填且必须是未来时间。
+    RunCreate:
+      type: object
+      required: [definition_id, parameters, trigger]
+      properties:
+        definition_id:
+          type: string
+          format: uuid
+        definition_version_id:
+          type: [string, 'null']
+          format: uuid
+        parameters:
+          $ref: '#/components/schemas/JsonObject'
+        trigger:
+          $ref: '#/components/schemas/RunTrigger'
+    RunCancelRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+    RunRetryRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+    Run:
+      type: object
+      required: [id, definition_id, definition_version_id, trigger_type, status, parameters, attempt_count, max_attempts, created_at, updated_at, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        definition_id:
+          type: string
+          format: uuid
+        definition_version_id:
+          type: string
+          format: uuid
+        target_id:
+          type: [string, 'null']
+          format: uuid
+        schedule_id:
+          type: [string, 'null']
+          format: uuid
+        scheduled_for:
+          type: [string, 'null']
+          format: date-time
+        trigger_type:
+          $ref: '#/components/schemas/TriggerType'
+        status:
+          $ref: '#/components/schemas/RunStatus'
+        parameters:
+          $ref: '#/components/schemas/JsonObject'
+          description: 脱敏后的参数；敏感字段为 ***。
+        queued_at:
+          type: [string, 'null']
+          format: date-time
+        started_at:
+          type: [string, 'null']
+          format: date-time
+        finished_at:
+          type: [string, 'null']
+          format: date-time
+        next_retry_at:
+          type: [string, 'null']
+          format: date-time
+        attempt_count:
+          type: integer
+        max_attempts:
+          type: integer
+        parent_run_id:
+          type: [string, 'null']
+          format: uuid
+        error_code:
+          type: [string, 'null']
+        error_message:
+          type: [string, 'null']
+        result_summary:
+          $ref: '#/components/schemas/JsonObject'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+    RunDetail:
+      allOf:
+        - $ref: '#/components/schemas/Run'
+        - type: object
+          required: [attempts]
+          properties:
+            attempts:
+              type: array
+              items:
+                $ref: '#/components/schemas/Attempt'
+            cancel_requested_at:
+              type: [string, 'null']
+              format: date-time
+            worker_id:
+              type: [string, 'null']
+              format: uuid
+    RunList:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Run'
+    Attempt:
+      type: object
+      required: [id, run_id, attempt_no, status, executor_type, started_at, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        run_id:
+          type: string
+          format: uuid
+        attempt_no:
+          type: integer
+        status:
+          $ref: '#/components/schemas/AttemptStatus'
+        executor_type:
+          $ref: '#/components/schemas/ExecutorType'
+        target_id:
+          type: [string, 'null']
+          format: uuid
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: [string, 'null']
+          format: date-time
+        duration_ms:
+          type: [integer, 'null']
+        exit_code:
+          type: [integer, 'null']
+        http_status:
+          type: [integer, 'null']
+        error_class:
+          type: [string, 'null']
+        error_message:
+          type: [string, 'null']
+        stdout_excerpt:
+          type: [string, 'null']
+        stderr_excerpt:
+          type: [string, 'null']
+        response_excerpt:
+          type: [string, 'null']
+        truncated:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    AttemptList:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Attempt'
+
+    PageMeta:
+      type: object
+      required: [page, page_size, total, total_pages]
+      properties:
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+        total_pages:
+          type: integer
+    StatBucket:
+      type: object
+      required: [key, total]
+      properties:
+        key:
+          type: string
+        total:
+          type: integer
+        succeeded:
+          type: integer
+        failed:
+          type: integer
+        cancelled:
+          type: integer
+        skipped:
+          type: integer
+        missed:
+          type: integer
+        success_rate:
+          type: number
+        avg_duration_ms:
+          type: [number, 'null']
+        p95_duration_ms:
+          type: [number, 'null']
+    RunStats:
+      type: object
+      required: [total, succeeded, failed, cancelled, skipped, missed, retrying]
+      properties:
+        total:
+          type: integer
+        succeeded:
+          type: integer
+        failed:
+          type: integer
+        cancelled:
+          type: integer
+        skipped:
+          type: integer
+        missed:
+          type: integer
+        retrying:
+          type: integer
+        success_rate:
+          type: number
+        avg_duration_ms:
+          type: [number, 'null']
+        p95_duration_ms:
+          type: [number, 'null']
+        buckets:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatBucket'
+    AttemptStats:
+      type: object
+      required: [total, succeeded, failed, timed_out, cancelled]
+      properties:
+        total:
+          type: integer
+        succeeded:
+          type: integer
+        failed:
+          type: integer
+        timed_out:
+          type: integer
+        cancelled:
+          type: integer
+        success_rate:
+          type: number
+        avg_duration_ms:
+          type: [number, 'null']
+        buckets:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatBucket'
+
+    AuditEvent:
+      type: object
+      required: [id, action, resource_type, outcome, correlation_id, created_at]
+      properties:
+        id:
+          type: integer
+        actor_user_id:
+          type: [string, 'null']
+          format: uuid
+        actor_username:
+          type: [string, 'null']
+        action:
+          type: string
+        resource_type:
+          type: string
+        resource_id:
+          type: [string, 'null']
+        outcome:
+          $ref: '#/components/schemas/AuditOutcome'
+        ip_address:
+          type: [string, 'null']
+        user_agent:
+          type: [string, 'null']
+        correlation_id:
+          type: string
+        details:
+          $ref: '#/components/schemas/JsonObject'
+        created_at:
+          type: string
+          format: date-time
+    AuditEventList:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/AuditEvent'
+
+    Readiness:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, unavailable]
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+            required: [status]
+            properties:
+              status:
+                type: string
+                enum: [ok, degraded, unavailable]
+              message:
+                type: string
