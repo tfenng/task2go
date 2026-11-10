@@ -123,6 +123,10 @@ export function cancelRun(id: string): Promise<Run> {
   return request<Run>(`/runs/${id}/cancel`, { method: "POST" });
 }
 
+export async function deleteRun(id: string): Promise<void> {
+  await request<void>(`/runs/${id}`, { method: "DELETE" });
+}
+
 export function retryRun(id: string): Promise<Run> {
   return request<Run>(`/runs/${id}/retry`, { method: "POST" });
 }

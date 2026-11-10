@@ -105,7 +105,7 @@ export default function UsersPage() {
           <Form.Item name="username" label="用户名" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="display_name" label="显示名" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="role" label="角色"><Select options={[{ value: "admin" }, { value: "operator" }, { value: "viewer" }]} /></Form.Item>
-          <Form.Item name="password" label="初始密码" rules={[{ required: true, min: 12 }]}><Input.Password autoComplete="new-password" /></Form.Item>
+          <Form.Item name="password" label="初始密码" rules={[{ required: true, min: 6 }]}><Input.Password autoComplete="new-password" /></Form.Item>
         </Form>
       </Modal>
     </div>

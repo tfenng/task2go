@@ -7,8 +7,18 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// runColumns must stay in store.Run field order: single-row scans are positional.
+// Alembic-created databases append schedule_id/scheduled_for at the end, so
+// RETURNING */SELECT * cannot be scanned positionally into Run.
+const runColumns = `id, definition_id, definition_version_id, target_snapshot,
+    schedule_id, scheduled_for, trigger_type, status, idempotency_key, request_hash,
+    parameters, parameters_redacted, queued_at, started_at, finished_at, next_retry_at,
+    attempt_count, max_attempts, worker_id, lease_expires_at, parent_run_id,
+    cancel_requested_at, cancel_requested_by, error_code, error_message,
+    result_summary, created_by, created_at, updated_at, version, timeout_seconds`
+
 func (s *Store) GetRun(ctx context.Context, q Querier, id string) (*Run, error) {
-	return One[Run](q.QueryRow(ctx, `SELECT * FROM runs WHERE id=$1`, id))
+	return One[Run](q.QueryRow(ctx, `SELECT `+runColumns+` FROM runs WHERE id=$1`, id))
 }
 
 func (s *Store) ListRuns(ctx context.Context, q Querier, limit, offset int, definitionID, status *string) ([]Run, int, error) {
@@ -40,16 +50,17 @@ INSERT INTO runs (id, definition_id, definition_version_id, target_snapshot,
     parameters, parameters_redacted, queued_at, started_at, finished_at, next_retry_at,
     attempt_count, max_attempts, worker_id, lease_expires_at, parent_run_id,
     cancel_requested_at, cancel_requested_by, error_code, error_message,
-    result_summary, created_by, created_at, updated_at, version)
+    result_summary, created_by, created_at, updated_at, version, timeout_seconds)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-    $21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
-RETURNING *`,
+    $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
+RETURNING `+runColumns,
 		r.ID, r.DefinitionID, r.DefinitionVersionID, r.TargetSnapshot, r.ScheduleID,
 		r.ScheduledFor, r.TriggerType, r.Status, r.IdempotencyKey, r.RequestHash,
 		r.Parameters, r.ParametersRedacted, r.QueuedAt, r.StartedAt, r.FinishedAt,
 		r.NextRetryAt, r.AttemptCount, r.MaxAttempts, r.WorkerID, r.LeaseExpiresAt,
 		r.ParentRunID, r.CancelRequestedAt, r.CancelRequestedBy, r.ErrorCode,
-		r.ErrorMessage, r.ResultSummary, r.CreatedBy, r.CreatedAt, r.UpdatedAt, r.Version)
+		r.ErrorMessage, r.ResultSummary, r.CreatedBy, r.CreatedAt, r.UpdatedAt, r.Version,
+		r.TimeoutSeconds)
 	return scanInto(row, r)
 }
 
@@ -62,7 +73,7 @@ UPDATE runs SET target_snapshot=$2, schedule_id=$3, scheduled_for=$4, trigger_ty
     max_attempts=$16, worker_id=$17, lease_expires_at=$18, parent_run_id=$19,
     cancel_requested_at=$20, cancel_requested_by=$21, error_code=$22, error_message=$23,
     result_summary=$24, updated_at=$25, version=$26
-WHERE id=$1 RETURNING *`,
+WHERE id=$1 RETURNING `+runColumns,
 		r.ID, r.TargetSnapshot, r.ScheduleID, r.ScheduledFor, r.TriggerType, r.Status,
 		r.IdempotencyKey, r.RequestHash, r.Parameters, r.ParametersRedacted,
 		r.QueuedAt, r.StartedAt, r.FinishedAt, r.NextRetryAt, r.AttemptCount,
@@ -72,9 +83,17 @@ WHERE id=$1 RETURNING *`,
 	return scanInto(row, r)
 }
 
+func (s *Store) DeleteRun(ctx context.Context, q Querier, id string) (bool, error) {
+	tag, err := q.Exec(ctx, `DELETE FROM runs WHERE id=$1`, id)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 func (s *Store) FindRunByIdempotency(ctx context.Context, q Querier, userID, key string) (*Run, error) {
 	return One[Run](q.QueryRow(ctx, `
-SELECT * FROM runs WHERE created_by=$1 AND idempotency_key=$2`, userID, key))
+SELECT `+runColumns+` FROM runs WHERE created_by=$1 AND idempotency_key=$2`, userID, key))
 }
 
 func (s *Store) AttemptsFor(ctx context.Context, q Querier, runID string) ([]Attempt, error) {
@@ -134,7 +153,7 @@ LIMIT 1`).Scan(&runID)
 	if err != nil {
 		return nil, err
 	}
-	run, err := One[Run](q.QueryRow(ctx, `SELECT * FROM runs WHERE id=$1 FOR UPDATE`, runID))
+	run, err := One[Run](q.QueryRow(ctx, `SELECT `+runColumns+` FROM runs WHERE id=$1 FOR UPDATE`, runID))
 	if err != nil || run == nil {
 		return nil, err
 	}

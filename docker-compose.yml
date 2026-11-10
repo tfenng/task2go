@@ -1,31 +1,13 @@
 name: task-control-go
 
 services:
-  db:
-    image: postgres:16
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-task_control}
-      POSTGRES_USER: ${POSTGRES_USER:-task_control}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-task_control}
-    ports:
-      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - task_control_pg:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-      start_period: 10s
-
   app:
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
-      TASK_CONTROL_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-task_control}:${POSTGRES_PASSWORD:-task_control}@db:5432/${POSTGRES_DB:-task_control}
+      TASK_CONTROL_DATABASE_URL: ${TASK_CONTROL_DATABASE_URL:?set TASK_CONTROL_DATABASE_URL in .env (use host.docker.internal for a host database)}
       TASK_CONTROL_SECRET_KEYS: ${TASK_CONTROL_SECRET_KEYS:?set TASK_CONTROL_SECRET_KEYS in .env}
       TASK_CONTROL_SECRET_ACTIVE_VERSION: ${TASK_CONTROL_SECRET_ACTIVE_VERSION:-1}
       TASK_CONTROL_COOKIE_SECURE: ${TASK_CONTROL_COOKIE_SECURE:-false}
@@ -36,9 +18,8 @@ services:
       TASK_CONTROL_HTTP_ADDR: 0.0.0.0:8000
     ports:
       - "${TASK_CONTROL_API_PORT:-8000}:8000"
-    depends_on:
-      db:
-        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./task-scripts:/opt/task-scripts:ro
       - task_control_output:/var/lib/task-control-output
@@ -50,5 +31,4 @@ services:
       start_period: 15s
 
 volumes:
-  task_control_pg:
   task_control_output:

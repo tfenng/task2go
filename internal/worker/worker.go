@@ -123,7 +123,7 @@ func (w *Worker) execute(ctx context.Context, claimed *store.Claimed) {
 	defer stopLease()
 	result := exec.Execute(ctx, executor.Context{
 		RunID: run.ID, AttemptNo: claimed.Attempt.AttemptNo, Parameters: plain,
-		Target: target, TimeoutSeconds: version.TimeoutSeconds,
+		Target: target, TimeoutSeconds: run.TimeoutSeconds,
 		OutputLimitBytes:        w.Cfg.OutputLimitBytes,
 		OutputCaptureLimitBytes: w.Cfg.OutputCaptureLimitBytes,
 		OutputRoot:              w.Cfg.OutputRoot, DefaultShell: w.Cfg.DefaultShell,

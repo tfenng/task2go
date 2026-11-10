@@ -151,7 +151,7 @@ func (s *Scheduler) createRunFromSchedule(ctx context.Context, tx pgx.Tx, schedu
 		TriggerType: schedule.TriggerType, Status: status, Parameters: rawMap(encrypted),
 		ParametersRedacted: schedule.ParametersRedacted, AttemptCount: 0,
 		MaxAttempts: retry.MaxAttempts, CreatedBy: schedule.CreatedBy,
-		CreatedAt: now, UpdatedAt: now, Version: 1,
+		CreatedAt: now, UpdatedAt: now, Version: 1, TimeoutSeconds: version.TimeoutSeconds,
 	}
 	if status == "queued" {
 		run.QueuedAt = &now

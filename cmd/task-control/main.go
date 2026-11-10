@@ -319,8 +319,8 @@ func runHealthcheck(args []string) int {
 
 func readPassword(value string) (string, error) {
 	if value != "" {
-		if len(value) < 12 {
-			return "", errors.New("password must be at least 12 characters")
+		if len(value) < 6 {
+			return "", errors.New("password must be at least 6 characters")
 		}
 		return value, nil
 	}
@@ -339,8 +339,8 @@ func readPassword(value string) (string, error) {
 	if string(first) != string(second) {
 		return "", errors.New("passwords do not match")
 	}
-	if len(first) < 12 {
-		return "", errors.New("password must be at least 12 characters")
+	if len(first) < 6 {
+		return "", errors.New("password must be at least 6 characters")
 	}
 	return string(first), nil
 }

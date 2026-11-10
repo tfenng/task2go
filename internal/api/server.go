@@ -65,6 +65,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/runs", s.listRuns)
 	mux.HandleFunc("POST /api/v1/runs", s.createRun)
 	mux.HandleFunc("GET /api/v1/runs/{run_id}", s.getRun)
+	mux.HandleFunc("DELETE /api/v1/runs/{run_id}", s.deleteRun)
 	mux.HandleFunc("GET /api/v1/runs/{run_id}/live-output", s.getLiveOutput)
 	mux.HandleFunc("POST /api/v1/runs/{run_id}/retry", s.retryRun)
 	mux.HandleFunc("POST /api/v1/runs/{run_id}/cancel", s.cancelRun)

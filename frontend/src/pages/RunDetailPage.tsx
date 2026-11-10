@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, Card, Descriptions, Modal, Space, Switch, Table, Tag, Typography, message } from "antd";
+import { ArrowLeftOutlined } from "@ant-design/icons";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import dayjs from "dayjs";
 import { cancelRun, getRun, getRunLiveOutput, retryRun } from "../api";
+import { STATUS_COLORS, TERMINAL_STATUSES } from "../lib/status";
 import type { Attempt, LiveOutput, Run, User } from "../types";
 
 function formatBytes(value: number): string {
@@ -118,16 +120,19 @@ export default function RunDetailPage({ user }: { user: User }) {
   return (
     <div>
       <div className="page-head">
-        <Typography.Title level={3}>运行详情</Typography.Title>
         <Space>
-          {user.role !== "viewer" && <Button onClick={cancel} disabled={["succeeded", "failed", "cancelled", "skipped", "missed"].includes(run.status)}>取消</Button>}
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate("/runs")}>返回</Button>
+          <Typography.Title level={3} style={{ margin: 0 }}>运行详情</Typography.Title>
+        </Space>
+        <Space>
+          {user.role !== "viewer" && <Button onClick={cancel} disabled={TERMINAL_STATUSES.includes(run.status)}>取消</Button>}
           {user.role !== "viewer" && <Button type="primary" onClick={retry} disabled={!["succeeded", "failed", "cancelled"].includes(run.status)}>重试</Button>}
         </Space>
       </div>
       <Card loading={loading}>
         <Descriptions column={2} bordered size="small">
           <Descriptions.Item label="ID">{run.id}</Descriptions.Item>
-          <Descriptions.Item label="状态"><Tag>{run.status}</Tag></Descriptions.Item>
+          <Descriptions.Item label="状态"><Tag color={STATUS_COLORS[run.status]}>{run.status}</Tag></Descriptions.Item>
           <Descriptions.Item label="任务定义">
             {run.definition_name ? <Link to={`/definitions/${run.definition_id}`}>{run.definition_name} ({run.definition_key})</Link> : run.definition_id}
           </Descriptions.Item>

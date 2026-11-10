@@ -170,6 +170,7 @@ type Run struct {
 	CreatedAt           time.Time  `db:"created_at"`
 	UpdatedAt           time.Time  `db:"updated_at"`
 	Version             int        `db:"version"`
+	TimeoutSeconds      int        `db:"timeout_seconds"`
 }
 
 type Attempt struct {

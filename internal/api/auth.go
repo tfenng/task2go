@@ -162,7 +162,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
-	if len(body.NewPassword) < 12 || len(body.NewPassword) > 256 {
+	if len(body.NewPassword) < 6 || len(body.NewPassword) > 256 {
 		writeError(w, r, validationErr("request validation failed"))
 		return
 	}

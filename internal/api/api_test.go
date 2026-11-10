@@ -90,8 +90,11 @@ func TestImmediateRunEndToEnd(t *testing.T) {
 	})
 	definitionID, _ := definition["id"].(string)
 	run := doJSON(t, client, httpServer.URL+"/api/v1/runs", csrf, map[string]any{
-		"definition_id": definitionID, "arguments": []any{"world"},
+		"definition_id": definitionID, "arguments": []any{"world"}, "timeout_seconds": 5,
 	})
+	if run["timeout_seconds"] != float64(5) {
+		t.Fatalf("run timeout_seconds: %#v", run["timeout_seconds"])
+	}
 	runID, _ := run["id"].(string)
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
@@ -106,11 +109,34 @@ func TestImmediateRunEndToEnd(t *testing.T) {
 			if stdout != "hello world\n" {
 				t.Fatalf("stdout %q", stdout)
 			}
+			doDelete(t, client, httpServer.URL+"/api/v1/runs/"+runID, csrf)
+			resp, err := client.Get(httpServer.URL + "/api/v1/runs/" + runID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusNotFound {
+				t.Fatalf("deleted run still readable: %d", resp.StatusCode)
+			}
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("run did not finish: %#v", run)
+}
+
+func doDelete(t *testing.T, client *http.Client, url, csrf string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodDelete, url, nil)
+	req.Header.Set("X-CSRF-Token", csrf)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("DELETE %s: %d", url, resp.StatusCode)
+	}
 }
 
 func doJSON(t *testing.T, client *http.Client, url, csrf string, body any) map[string]any {

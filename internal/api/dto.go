@@ -234,6 +234,7 @@ type RunCreate struct {
 	DefinitionVersionID *string        `json:"definition_version_id"`
 	Arguments           []string       `json:"arguments"`
 	Parameters          map[string]any `json:"parameters"`
+	TimeoutSeconds      *int           `json:"timeout_seconds"`
 	Trigger             TriggerInput   `json:"trigger"`
 }
 
@@ -249,6 +250,7 @@ type RunOut struct {
 	Parameters          map[string]any `json:"parameters"`
 	AttemptCount        int            `json:"attempt_count"`
 	MaxAttempts         int            `json:"max_attempts"`
+	TimeoutSeconds      int            `json:"timeout_seconds"`
 	QueuedAt            *time.Time     `json:"queued_at"`
 	StartedAt           *time.Time     `json:"started_at"`
 	FinishedAt          *time.Time     `json:"finished_at"`
@@ -290,7 +292,8 @@ func runOut(r *store.Run) RunOut {
 		ScheduleID: r.ScheduleID, ScheduledFor: r.ScheduledFor, TriggerType: r.TriggerType,
 		Status: r.Status, Arguments: argumentsFrom(r.ParametersRedacted),
 		Parameters: r.ParametersRedacted.Map(), AttemptCount: r.AttemptCount,
-		MaxAttempts: r.MaxAttempts, QueuedAt: r.QueuedAt, StartedAt: r.StartedAt,
+		MaxAttempts: r.MaxAttempts, TimeoutSeconds: r.TimeoutSeconds,
+		QueuedAt: r.QueuedAt, StartedAt: r.StartedAt,
 		FinishedAt: r.FinishedAt, NextRetryAt: r.NextRetryAt, ParentRunID: r.ParentRunID,
 		ErrorCode: r.ErrorCode, ErrorMessage: r.ErrorMessage, ResultSummary: result,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, Version: r.Version,
@@ -335,7 +338,6 @@ type RunDetail struct {
 	ExecutorType        *string        `json:"executor_type"`
 	ExecutorConfig      map[string]any `json:"executor_config"`
 	ParameterSchema     map[string]any `json:"parameter_schema"`
-	TimeoutSeconds      *int           `json:"timeout_seconds"`
 	Attempts            []AttemptOut   `json:"attempts"`
 }
 

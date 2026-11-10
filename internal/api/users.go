@@ -58,7 +58,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, validationErr("request validation failed"))
 		return
 	}
-	if len(body.Password) < 12 || len(body.Password) > 256 {
+	if len(body.Password) < 6 || len(body.Password) > 256 {
 		writeError(w, r, validationErr("request validation failed"))
 		return
 	}

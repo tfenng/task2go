@@ -76,6 +76,12 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if body.TimeoutSeconds != nil && (*body.TimeoutSeconds < 1 || *body.TimeoutSeconds > 86400) {
+		writeError(w, r, validationErr("request validation failed", params.FieldError{
+			Field: "timeout_seconds", Code: "range", Message: "Input should be between 1 and 86400",
+		}))
+		return
+	}
 	idempotency := r.Header.Get("Idempotency-Key")
 	ctx := r.Context()
 	var created *store.Run
@@ -96,6 +102,10 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		}
 		if version == nil {
 			return notFound("definition version not found")
+		}
+		timeoutSeconds := version.TimeoutSeconds
+		if body.TimeoutSeconds != nil {
+			timeoutSeconds = *body.TimeoutSeconds
 		}
 		schema := version.ParameterSchema.Map()
 		var parameters map[string]any
@@ -155,7 +165,8 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 			IdempotencyKey: keyPtr, RequestHash: &requestHash,
 			Parameters: rawMap(encrypted), ParametersRedacted: rawMap(redacted),
 			QueuedAt: &now, AttemptCount: 0, MaxAttempts: retry.MaxAttempts,
-			CreatedBy: auth.User.ID, CreatedAt: now, UpdatedAt: now, Version: 1,
+			TimeoutSeconds: timeoutSeconds,
+			CreatedBy:      auth.User.ID, CreatedAt: now, UpdatedAt: now, Version: 1,
 		}
 		if err := s.Store.CreateRun(ctx, tx, run); err != nil {
 			return err
@@ -206,7 +217,6 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 		detail.ExecutorType = &version.ExecutorType
 		detail.ExecutorConfig = version.ExecutorConfig.Map()
 		detail.ParameterSchema = version.ParameterSchema.Map()
-		detail.TimeoutSeconds = &version.TimeoutSeconds
 	}
 	for _, attempt := range attempts {
 		detail.Attempts = append(detail.Attempts, attemptOut(attempt))
@@ -353,7 +363,8 @@ func (s *Server) retryRun(w http.ResponseWriter, r *http.Request) {
 			TargetSnapshot: run.TargetSnapshot, TriggerType: "immediate", Status: "queued",
 			IdempotencyKey: keyPtr, Parameters: rawMap(encrypted),
 			ParametersRedacted: run.ParametersRedacted, QueuedAt: &now, AttemptCount: 0,
-			MaxAttempts: retry.MaxAttempts, ParentRunID: &run.ID, CreatedBy: auth.User.ID,
+			MaxAttempts: retry.MaxAttempts, TimeoutSeconds: run.TimeoutSeconds,
+			ParentRunID: &run.ID, CreatedBy: auth.User.ID,
 			CreatedAt: now, UpdatedAt: now, Version: 1,
 		}
 		if err := s.Store.CreateRun(ctx, tx, newRun); err != nil {
@@ -418,6 +429,44 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, runOut(updated))
+}
+
+func (s *Server) deleteRun(w http.ResponseWriter, r *http.Request) {
+	auth, apiErr := s.requireCSRF(r, "admin", "operator")
+	if apiErr != nil {
+		writeError(w, r, apiErr)
+		return
+	}
+	id, apiErr := pathID(r, "run_id")
+	if apiErr != nil {
+		writeError(w, r, apiErr)
+		return
+	}
+	ctx := r.Context()
+	err := s.Store.WithTx(ctx, func(tx pgx.Tx) error {
+		run, err := s.Store.GetRun(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if run == nil {
+			return notFound("run not found")
+		}
+		switch run.Status {
+		case "succeeded", "failed", "cancelled", "skipped", "missed":
+		default:
+			return invalidState("run is not finished")
+		}
+		if _, err := s.Store.DeleteRun(ctx, tx, id); err != nil {
+			return err
+		}
+		s.audit(ctx, tx, auth.User, "run.delete", "task_run", id, nil, r)
+		return nil
+	})
+	if err != nil {
+		writeError(w, r, asAPIError(err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func stringsToAny(values []string) []any {

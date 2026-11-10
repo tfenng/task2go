@@ -108,7 +108,7 @@ paths:
                 new_password:
                   type: string
                   format: password
-                  minLength: 12
+                  minLength: 6
       responses:
         '204':
           description: 密码已修改，其他会话被吊销
@@ -957,6 +957,20 @@ paths:
                 $ref: '#/components/schemas/RunDetail'
         '404':
           $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [runs]
+      operationId: deleteRun
+      summary: 删除已结束的运行及其尝试记录
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204':
+          description: 已删除；运行中的任务返回 409
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /runs/{run_id}/cancel:
     post:
       tags: [runs]
@@ -1524,7 +1538,7 @@ components:
         password:
           type: string
           format: password
-          minLength: 12
+          minLength: 6
     UserUpdate:
       type: object
       properties:
@@ -2061,6 +2075,11 @@ components:
           format: uuid
         parameters:
           $ref: '#/components/schemas/JsonObject'
+        timeout_seconds:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 86400
+          description: 本次运行的超时秒数；省略时使用定义版本的 timeout_seconds。
         trigger:
           $ref: '#/components/schemas/RunTrigger'
     RunCancelRequest:
@@ -2120,6 +2139,9 @@ components:
           type: integer
         max_attempts:
           type: integer
+        timeout_seconds:
+          type: integer
+          description: 本次运行实际采用的超时秒数。
         parent_run_id:
           type: [string, 'null']
           format: uuid

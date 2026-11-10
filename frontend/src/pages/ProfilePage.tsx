@@ -55,7 +55,7 @@ export default function ProfilePage() {
           <Form.Item name="current_password" label="当前密码" rules={[{ required: true }]}>
             <Input.Password autoComplete="current-password" />
           </Form.Item>
-          <Form.Item name="new_password" label="新密码" rules={[{ required: true, min: 12 }]}>
+          <Form.Item name="new_password" label="新密码" rules={[{ required: true, min: 6 }]}>
             <Input.Password autoComplete="new-password" />
           </Form.Item>
           <Button type="primary" onClick={submitPassword}>保存</Button>
